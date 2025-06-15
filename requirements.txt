@@ -1,0 +1,4 @@
+flask==2.3.3
+pulp==2.7.0
+numpy==1.24.4
+flask-cors==4.0.0
