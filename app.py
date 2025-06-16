@@ -12,16 +12,23 @@ import logging
 import os
 import uuid
 from flask_cors import CORS
-import requests
-from io import BytesIO
 import threading
 import time
+from pathlib import Path
 
 app = Flask(__name__)
 CORS(app, origins=["https://chat.openai.com"])
 
+# Configurações de caminho
+BASE_DIR = Path(__file__).parent.resolve()
+LOGO_PATH = BASE_DIR / "logo.png"
+
+# Verificar existência do logo
+if not LOGO_PATH.exists():
+    app.logger.error(f"Arquivo de logo não encontrado: {LOGO_PATH}")
+    LOGO_PATH = None
+
 # Configurações da empresa
-LOGO_URL = "https://i.imgur.com/neLsj8d.png"  # URL direta da imagem
 TELEFONE = "910191078"
 
 # Configuração de logging
@@ -41,17 +48,20 @@ result_cache = {}
 cache_lock = threading.Lock()
 
 # ========================================================================== #
-#  FUNÇÕES AUXILIARES
+#  LIMPEZA AUTOMÁTICA DO CACHE (executa a cada 5 minutos)
 # ========================================================================== #
-def download_image(url):
-    """Faz download seguro da imagem com tratamento de erros"""
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return BytesIO(response.content)
-    except Exception as e:
-        app.logger.error(f"Erro ao baixar imagem: {str(e)}")
-        return None
+def clean_cache():
+    while True:
+        time.sleep(300)  # 5 minutos
+        now = time.time()
+        with cache_lock:
+            global result_cache
+            # Mantém registros dos últimos 30 minutos
+            result_cache = {k: v for k, v in result_cache.items() if now - v['timestamp'] < 1800}
+
+# Inicia thread de limpeza
+cache_cleaner = threading.Thread(target=clean_cache, daemon=True)
+cache_cleaner.start()
 
 # ========================================================================== #
 #  GERADOR DE PDF PROFISSIONAL
@@ -105,20 +115,19 @@ def generate_receipt_pdf(resultado):
             
             # Logo centralizada - SOLUÇÃO CONFIÁVEL
             try:
-                # Download direto da imagem
-                img_data = download_image(LOGO_URL)
-                if img_data:
-                    c.drawImage(img_data, width/2-55, height-150, 
+                if LOGO_PATH and LOGO_PATH.exists():
+                    # Usar logo local
+                    c.drawImage(str(LOGO_PATH), width/2-55, height-150, 
                                 width=110, height=110, 
                                 preserveAspectRatio=True, mask='auto')
-                    app.logger.info("Logo carregado com sucesso")
+                    app.logger.info("Logo local carregado com sucesso")
                 else:
-                    # Fallback: Desenhar texto se imagem falhar
+                    # Fallback: Usar texto
                     c.setFont("Helvetica-Bold", 16)
                     c.drawCentredString(width/2, height-130, "ENGOMADORIA TERESA")
                     app.logger.warning("Usando fallback de texto para logo")
             except Exception as e:
-                app.logger.error(f"Erro no logo: {str(e)}")
+                app.logger.error(f"Erro ao carregar logo: {str(e)}")
                 c.setFont("Helvetica-Bold", 16)
                 c.drawCentredString(width/2, height-130, "ENGOMADORIA TERESA")
             
@@ -320,8 +329,8 @@ def health_check():
     """Endpoint para verificação de saúde da API"""
     return jsonify({
         "status": "online",
-        "versao": "1.3.0",
-        "mensagem": "API com suporte a download de PDF via GET"
+        "versao": "1.4.0",
+        "mensagem": "API com suporte a download de PDF via GET e logo local"
     })
 
 if __name__ == '__main__':

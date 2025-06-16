@@ -13,6 +13,7 @@ from pulp import LpProblem, LpMinimize, LpInteger, LpVariable, lpSum, LpStatus
 import json
 import logging
 import numpy as np
+import os  # Adicionado conforme solicitado
 
 # --------------------------------------------------------------------------- #
 #  CATALOGO ATUALIZADO (JULHO 2025)
@@ -80,6 +81,11 @@ class LaundryOptimizer:
 
         self.log.info("Processando pedido: %s", order)
 
+        # Validação de pedido vazio
+        if all(qty == 0 for qty in order.values()):
+            self.log.warning("Pedido vazio recebido")
+            return 0.0, {"itens_fixos": {}}, {}
+
         fixed_cost = sum(
             order[item] * self.catalog["avulso"][item]
             for item in self._SPECIALS
@@ -89,6 +95,29 @@ class LaundryOptimizer:
             "peca_variada": order["peca_variada"],
             "camisa": order["camisa"],
         }
+
+        # Verificar se há itens para otimizar
+        if qty["peca_variada"] == 0 and qty["camisa"] == 0:
+            self.log.info("Nenhum item otimizável necessário")
+            return fixed_cost, {"itens_fixos": {
+                k: v for k, v in order.items() 
+                if k in self._SPECIALS and v > 0
+            }}, {}
+
+        # Calcular capacidade total disponível
+        total_capacity = sum(
+            p["capacidade"] * 10  # Considerar 10x a capacidade máxima
+            for p in self.catalog["packs_mistos"]
+        )
+        total_capacity += sum(
+            p["capacidade"] * 10
+            for p in self.catalog["packs_camisas"]
+        )
+        
+        # Verificar viabilidade
+        total_items = qty["peca_variada"] + qty["camisa"]
+        if total_items > total_capacity:
+            raise ValueError(f"Pedido muito grande ({total_items} itens). Capacidade máxima: {total_capacity}")
 
         prob = LpProblem("Minimizar_Custo_Lavanderia", LpMinimize)
 
@@ -141,6 +170,11 @@ class LaundryOptimizer:
         status = prob.solve(solver_name)
         if LpStatus[status] != "Optimal":
             raise RuntimeError(f"Erro no solver: {LpStatus[status]}")
+
+        # Verificar valores inválidos do solver
+        if any(var.value() is None for var in prob.variables()):
+            self.log.error("Solver retornou valores inválidos")
+            raise RuntimeError("Solução inválida do solver")
 
         packs_mistos = {k: int(v.value()) for k, v in x.items() if v.value() > 0}
         packs_camisas = {k: int(v.value()) for k, v in y.items() if v.value() > 0}
