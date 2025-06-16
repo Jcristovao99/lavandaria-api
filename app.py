@@ -1,8 +1,7 @@
-from flask import Flask, request, jsonify, send_file, redirect, url_for
+from flask import Flask, request, jsonify, send_file
 from laundry_optimizer_final import gpt_optimize_handler, CATALOG
 from reportlab.lib.pagesizes import A5
 from reportlab.pdfgen import canvas
-from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import Paragraph, Table, TableStyle
@@ -13,6 +12,8 @@ import logging
 import os
 import uuid
 from flask_cors import CORS
+import requests
+from io import BytesIO
 import threading
 import time
 
@@ -20,8 +21,8 @@ app = Flask(__name__)
 CORS(app, origins=["https://chat.openai.com"])
 
 # Configurações da empresa
-LOGO_URL = os.environ.get('LOGO_URL', 'https://i.imgur.com/neLsj8d.png')
-TELEFONE = os.environ.get('TELEFONE', '910191078')
+LOGO_URL = "https://i.imgur.com/neLsj8d.png"  # URL direta da imagem
+TELEFONE = "910191078"
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
@@ -35,24 +36,22 @@ VALID_KEYS = {
     "vestido_noiva", "casaco_sobretudo", "blusao_almofadado", "blusao_penas"
 }
 
-# Cache para armazenar resultados temporariamente
+# Cache para armazenar resultados
 result_cache = {}
 cache_lock = threading.Lock()
 
 # ========================================================================== #
-#  LIMPEZA AUTOMÁTICA DO CACHE (executa a cada 5 minutos)
+#  FUNÇÕES AUXILIARES
 # ========================================================================== #
-def clean_cache():
-    while True:
-        time.sleep(300)  # 5 minutos
-        now = time.time()
-        with cache_lock:
-            global result_cache
-            result_cache = {k: v for k, v in result_cache.items() if now - v['timestamp'] < 1800}  # Mantém por 30 min
-
-# Inicia thread de limpeza
-cache_cleaner = threading.Thread(target=clean_cache, daemon=True)
-cache_cleaner.start()
+def download_image(url):
+    """Faz download seguro da imagem com tratamento de erros"""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return BytesIO(response.content)
+    except Exception as e:
+        app.logger.error(f"Erro ao baixar imagem: {str(e)}")
+        return None
 
 # ========================================================================== #
 #  GERADOR DE PDF PROFISSIONAL
@@ -104,18 +103,29 @@ def generate_receipt_pdf(resultado):
             c.setFillColor(colors.HexColor('#f9f9f7'))
             c.rect(0, 0, width, height, fill=1, stroke=0)
             
-            # Logo centralizada (já inclui o nome da empresa)
+            # Logo centralizada - SOLUÇÃO CONFIÁVEL
             try:
-                logo = ImageReader(LOGO_URL)
-                c.drawImage(logo, width/2-55, height-140, width=110, height=110, 
-                            preserveAspectRatio=True, mask='auto')
+                # Download direto da imagem
+                img_data = download_image(LOGO_URL)
+                if img_data:
+                    c.drawImage(img_data, width/2-55, height-150, 
+                                width=110, height=110, 
+                                preserveAspectRatio=True, mask='auto')
+                    app.logger.info("Logo carregado com sucesso")
+                else:
+                    # Fallback: Desenhar texto se imagem falhar
+                    c.setFont("Helvetica-Bold", 16)
+                    c.drawCentredString(width/2, height-130, "ENGOMADORIA TERESA")
+                    app.logger.warning("Usando fallback de texto para logo")
             except Exception as e:
-                app.logger.error(f"Erro ao carregar logo: {str(e)}")
+                app.logger.error(f"Erro no logo: {str(e)}")
+                c.setFont("Helvetica-Bold", 16)
+                c.drawCentredString(width/2, height-130, "ENGOMADORIA TERESA")
             
             # Linha divisória abaixo do logo
             c.setStrokeColor(colors.HexColor('#192844'))
             c.setLineWidth(2)
-            c.line(margin, height-160, width-margin, height-160)
+            c.line(margin, height-180, width-margin, height-180)
             
             # Tabela de itens
             data = [['Descrição', 'Quantidade/Preço', 'Subtotal']]
@@ -175,22 +185,22 @@ def generate_receipt_pdf(resultado):
             
             # Desenhar tabela
             table.wrapOn(c, width-2*margin, height)
-            table.drawOn(c, margin, height-320)
+            table.drawOn(c, margin, height-340)
             
             # Linha divisória final
             c.setStrokeColor(colors.HexColor('#192844'))
             c.setLineWidth(2)
-            c.line(margin, height-400, width-margin, height-400)
+            c.line(margin, height-420, width-margin, height-420)
             
             # Total geral
             total_text = f"€ {resultado['custo_total']:.2f}".replace('.', ',')
             total_para = Paragraph("<b>TOTAL</b>", total_style)
             total_para.wrapOn(c, width-2*margin, height)
-            total_para.drawOn(c, margin, height-430)
+            total_para.drawOn(c, margin, height-450)
             
             total_val = Paragraph(f"<b>{total_text}</b>", total_style)
             total_val.wrapOn(c, width-2*margin, height)
-            total_val.drawOn(c, width-margin-100, height-430)
+            total_val.drawOn(c, width-margin-100, height-450)
             
             # Telefone
             phone_para = Paragraph(f"<b>{TELEFONE}</b>", phone_style)
@@ -310,7 +320,7 @@ def health_check():
     """Endpoint para verificação de saúde da API"""
     return jsonify({
         "status": "online",
-        "versao": "1.2.0",
+        "versao": "1.3.0",
         "mensagem": "API com suporte a download de PDF via GET"
     })
 
