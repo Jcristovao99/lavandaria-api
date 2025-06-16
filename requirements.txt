@@ -6,4 +6,4 @@ setuptools==70.0.0
 wheel==0.43.0
 gunicorn==21.2.0
 reportlab==4.1.0
-Pillow==10.3.0
+Pillow==10.3.0; python_version < '3.13'
