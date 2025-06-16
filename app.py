@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, redirect, url_for
 from laundry_optimizer_final import gpt_optimize_handler, CATALOG
 from reportlab.lib.pagesizes import A5
 from reportlab.pdfgen import canvas
@@ -11,10 +11,17 @@ from datetime import datetime
 import tempfile
 import logging
 import os
+import uuid
 from flask_cors import CORS
+import threading
+import time
 
 app = Flask(__name__)
 CORS(app, origins=["https://chat.openai.com"])
+
+# Configurações da empresa
+LOGO_URL = os.environ.get('LOGO_URL', 'https://i.imgur.com/neLsj8d.png')
+TELEFONE = os.environ.get('TELEFONE', '910191078')
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
@@ -28,9 +35,24 @@ VALID_KEYS = {
     "vestido_noiva", "casaco_sobretudo", "blusao_almofadado", "blusao_penas"
 }
 
-# Configurações da empresa
-LOGO_URL = "https://i.imgur.com/neLsj8d.png"  # Logo com o nome incluso
-TELEFONE = "910191078"
+# Cache para armazenar resultados temporariamente
+result_cache = {}
+cache_lock = threading.Lock()
+
+# ========================================================================== #
+#  LIMPEZA AUTOMÁTICA DO CACHE (executa a cada 5 minutos)
+# ========================================================================== #
+def clean_cache():
+    while True:
+        time.sleep(300)  # 5 minutos
+        now = time.time()
+        with cache_lock:
+            global result_cache
+            result_cache = {k: v for k, v in result_cache.items() if now - v['timestamp'] < 1800}  # Mantém por 30 min
+
+# Inicia thread de limpeza
+cache_cleaner = threading.Thread(target=clean_cache, daemon=True)
+cache_cleaner.start()
 
 # ========================================================================== #
 #  GERADOR DE PDF PROFISSIONAL
@@ -87,8 +109,8 @@ def generate_receipt_pdf(resultado):
                 logo = ImageReader(LOGO_URL)
                 c.drawImage(logo, width/2-55, height-140, width=110, height=110, 
                             preserveAspectRatio=True, mask='auto')
-            except:
-                app.logger.error("Erro ao carregar logo")
+            except Exception as e:
+                app.logger.error(f"Erro ao carregar logo: {str(e)}")
             
             # Linha divisória abaixo do logo
             c.setStrokeColor(colors.HexColor('#192844'))
@@ -232,8 +254,19 @@ def optimize():
         app.logger.info("Iniciando otimização...")
         response = gpt_optimize_handler(clean_items)
         
-        # Adicionar URL para geração do PDF
-        response['pdf_url'] = f"https://{request.host}/generate_summary"
+        # Gerar ID único para o resultado
+        receipt_id = str(uuid.uuid4())
+        
+        # Armazenar resultado no cache
+        with cache_lock:
+            result_cache[receipt_id] = {
+                "result": response,
+                "timestamp": time.time()
+            }
+        
+        # Adicionar URL para download do PDF (GET)
+        base_url = os.environ.get('BASE_URL', 'https://lavanderia-optimizer.onrender.com')
+        response['pdf_url'] = f"{base_url}/download_pdf/{receipt_id}"
         
         app.logger.info("Otimização concluída com sucesso")
         return jsonify(response)
@@ -245,15 +278,23 @@ def optimize():
             "mensagem": f"Erro interno no servidor: {str(e)}"
         }), 500
 
-@app.route('/generate_summary', methods=['POST'])
-def generate_summary():
-    """Gera PDF com resumo profissional"""
+@app.route('/download_pdf/<receipt_id>', methods=['GET'])
+def download_pdf(receipt_id):
+    """Endpoint GET para download direto do PDF"""
     try:
-        data = request.json
-        resultado = data['resultado']
+        # Recuperar resultado do cache
+        with cache_lock:
+            if receipt_id not in result_cache:
+                return jsonify({
+                    "status": "erro",
+                    "mensagem": "Recibo expirado ou inválido"
+                }), 404
+                
+            resultado = result_cache[receipt_id]["result"]
         
+        # Gerar PDF
         filename = generate_receipt_pdf(resultado)
-            
+        
         return send_file(
             filename,
             as_attachment=True,
@@ -269,8 +310,8 @@ def health_check():
     """Endpoint para verificação de saúde da API"""
     return jsonify({
         "status": "online",
-        "versao": "1.1.0",
-        "mensagem": "API de otimização com geração de PDF"
+        "versao": "1.2.0",
+        "mensagem": "API com suporte a download de PDF via GET"
     })
 
 if __name__ == '__main__':
