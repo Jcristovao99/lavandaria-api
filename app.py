@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify, send_file
 from laundry_optimizer_final import gpt_optimize_handler, CATALOG
-from reportlab.lib.pagesizes import A5
+from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import Paragraph, Table, TableStyle
-from reportlab.lib.units import cm
+from reportlab.lib.units import mm
 from datetime import datetime
 import tempfile
 import logging
@@ -15,6 +15,7 @@ from flask_cors import CORS
 import threading
 import time
 from pathlib import Path
+import math
 
 app = Flask(__name__)
 CORS(app, origins=["https://chat.openai.com"])
@@ -27,9 +28,6 @@ LOGO_PATH = BASE_DIR / "logo.png"
 if not LOGO_PATH.exists():
     app.logger.error(f"Arquivo de logo não encontrado: {LOGO_PATH}")
     LOGO_PATH = None
-
-# Configurações da empresa
-TELEFONE = "910191078"
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
@@ -64,108 +62,166 @@ cache_cleaner = threading.Thread(target=clean_cache, daemon=True)
 cache_cleaner.start()
 
 # ========================================================================== #
-#  GERADOR DE PDF PROFISSIONAL
+#  NOVAS FUNÇÕES PARA PDF DINÂMICO
 # ========================================================================== #
-def generate_receipt_pdf(resultado):
-    """Gera PDF profissional com design idêntico ao fornecido"""
+def calculate_total_items(breakdown):
+    """Calcula o número total de itens para altura dinâmica"""
+    count = 0
+    # Itens fixos
+    count += len(breakdown['itens_fixos'])
+    # Packs mistos
+    count += len([qty for qty in breakdown['packs_mistos'].values() if qty > 0])
+    # Packs de camisas
+    count += len([qty for qty in breakdown['packs_camisas'].values() if qty > 0])
+    # Itens avulsos
+    count += len([qty for qty in breakdown['itens_avulsos'].values() if qty > 0])
+    return count
+
+def calculate_dynamic_height(item_count, has_client):
+    """Calcula a altura do PDF baseada no número de itens"""
+    # Valores em milímetros
+    LOGO_HEIGHT = 50
+    CLIENT_HEIGHT = 10 if has_client else 0
+    TOP_MARGIN = 10
+    TABLE_HEADER_HEIGHT = 10
+    ITEM_ROW_HEIGHT = 8
+    TOTAL_SECTION_HEIGHT = 15
+    BOTTOM_MARGIN = 15
+    
+    return (
+        LOGO_HEIGHT +
+        TOP_MARGIN +
+        CLIENT_HEIGHT +
+        TABLE_HEADER_HEIGHT +
+        (item_count * ITEM_ROW_HEIGHT) +
+        TOTAL_SECTION_HEIGHT +
+        BOTTOM_MARGIN
+    )
+
+# ========================================================================== #
+#  GERADOR DE PDF PROFISSIONAL (ATUALIZADO)
+# ========================================================================== #
+def generate_receipt_pdf(resultado, cliente_nome=""):
+    """Gera PDF profissional com design atualizado e altura dinâmica"""
     try:
-        # Configurações
-        width, height = A5
-        margin = 1*cm
-        styles = getSampleStyleSheet()
+        # 1. Calcular dimensões dinâmicas
+        item_count = calculate_total_items(resultado['detalhes'])
+        has_client = bool(cliente_nome)
+        height_mm = calculate_dynamic_height(item_count, has_client)
+        width_mm = 210  # Largura A4
         
-        # Criar arquivo temporário
+        # 2. Criar arquivo temporário
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmpfile:
             filename = tmpfile.name
-            c = canvas.Canvas(filename, pagesize=A5)
+            # Criar canvas com tamanho dinâmico
+            c = canvas.Canvas(filename, pagesize=(width_mm*mm, height_mm*mm))
             
-            # Estilos personalizados
+            # 3. Configurar paleta de cores
+            COLORS = {
+                "background": "#f9f9f7",
+                "text_dark": "#182232",
+                "table_header": "#1a2d44",
+                "row_even": "#ffffff",
+                "row_odd": "#f0f0f0",
+                "total_bg": "#1a2d44",
+                "text_light": "#ffffff"
+            }
+            
+            # 4. Estilos personalizados
+            styles = getSampleStyleSheet()
             item_style = ParagraphStyle(
-                'item',
+                'Item',
                 parent=styles['BodyText'],
                 fontName='Helvetica',
-                fontSize=12,
-                leading=14,
-                textColor=colors.HexColor('#182232')
+                fontSize=10,
+                leading=12,
+                textColor=colors.HexColor(COLORS["text_dark"])
             )
             
             total_style = ParagraphStyle(
-                'total',
+                'Total',
                 parent=styles['BodyText'],
                 fontName='Helvetica-Bold',
-                fontSize=14,
-                leading=16,
-                textColor=colors.HexColor('#1a2d44')
+                fontSize=12,
+                textColor=colors.HexColor(COLORS["text_light"])
             )
             
-            phone_style = ParagraphStyle(
-                'phone',
+            client_style = ParagraphStyle(
+                'Client',
                 parent=styles['BodyText'],
                 fontName='Helvetica-Bold',
-                fontSize=14,
-                leading=16,
-                alignment=1,
-                textColor=colors.HexColor('#1a2d44'),
-                spaceBefore=20
+                fontSize=12,
+                textColor=colors.HexColor(COLORS["text_dark"])
             )
             
-            # Fundo
-            c.setFillColor(colors.HexColor('#f9f9f7'))
-            c.rect(0, 0, width, height, fill=1, stroke=0)
+            # 5. Fundo
+            c.setFillColor(colors.HexColor(COLORS["background"]))
+            c.rect(0, 0, width_mm*mm, height_mm*mm, fill=1, stroke=0)
             
-            # Logo centralizada - SOLUÇÃO CONFIÁVEL
-            try:
-                if LOGO_PATH and LOGO_PATH.exists():
-                    # Usar logo local
-                    c.drawImage(str(LOGO_PATH), width/2-55, height-150, 
-                                width=110, height=110, 
-                                preserveAspectRatio=True, mask='auto')
-                    app.logger.info("Logo local carregado com sucesso")
-                else:
-                    # Fallback: Usar texto
-                    c.setFont("Helvetica-Bold", 16)
-                    c.drawCentredString(width/2, height-130, "ENGOMADORIA TERESA")
-                    app.logger.warning("Usando fallback de texto para logo")
-            except Exception as e:
-                app.logger.error(f"Erro ao carregar logo: {str(e)}")
+            # 6. Logo no topo (largura total)
+            logo_height = 50*mm
+            if LOGO_PATH and LOGO_PATH.exists():
+                c.drawImage(
+                    str(LOGO_PATH),
+                    x=0,
+                    y=height_mm*mm - logo_height,  # Topo da página
+                    width=width_mm*mm,
+                    height=logo_height,
+                    preserveAspectRatio=True,
+                    anchor='n'
+                )
+            else:
+                # Fallback caso o logo não exista
+                c.setFillColor(colors.HexColor(COLORS["table_header"]))
+                c.rect(0, height_mm*mm - logo_height, width_mm*mm, logo_height, fill=1, stroke=0)
+                c.setFillColor(colors.white)
                 c.setFont("Helvetica-Bold", 16)
-                c.drawCentredString(width/2, height-130, "ENGOMADORIA TERESA")
+                c.drawCentredString(width_mm*mm/2, height_mm*mm - logo_height/2, "ENGOMADORIA TERESA")
             
-            # Linha divisória abaixo do logo
-            c.setStrokeColor(colors.HexColor('#192844'))
-            c.setLineWidth(2)
-            c.line(margin, height-180, width-margin, height-180)
+            # 7. Nome do cliente (se fornecido)
+            y_pos = height_mm*mm - logo_height - 10*mm
+            if cliente_nome:
+                c.setFillColor(colors.HexColor(COLORS["text_dark"]))
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(15*mm, y_pos, f"Cliente: {cliente_nome}")
+                y_pos -= 15*mm  # Espaço adicional após cliente
             
-            # Tabela de itens
-            data = [['Descrição', 'Quantidade/Preço', 'Subtotal']]
+            # 8. Tabela de itens
+            data = [['Descrição', 'Quantidade', 'Preço Unitário', 'Subtotal']]
             
             # Adicionar itens fixos
             for item, qty in resultado['detalhes']['itens_fixos'].items():
-                preco = CATALOG['avulso'][item]
-                desc = item.replace('_', ' ').replace('ou', '/').title()
-                data.append([
-                    Paragraph(desc, item_style),
-                    f"{qty} × €{preco:.2f}".replace('.', ','),
-                    f"€ {qty*preco:.2f}".replace('.', ',')
-                ])
+                if qty > 0:
+                    preco = CATALOG['avulso'][item]
+                    desc = item.replace('_', ' ').replace('ou', '/').title()
+                    data.append([
+                        Paragraph(desc, item_style),
+                        str(qty),
+                        f"€{preco:.2f}".replace('.', ','),
+                        f"€{(qty*preco):.2f}".replace('.', ',')
+                    ])
             
             # Adicionar packs mistos
             for pack, qty in resultado['detalhes']['packs_mistos'].items():
-                pack_data = next(p for p in CATALOG['packs_mistos'] if p['tipo'] == pack)
-                data.append([
-                    Paragraph(f"Pack Misto {pack} peças", item_style),
-                    f"{qty} × €{pack_data['preco']:.2f}".replace('.', ','),
-                    f"€ {qty*pack_data['preco']:.2f}".replace('.', ',')
-                ])
+                if qty > 0:
+                    pack_data = next(p for p in CATALOG['packs_mistos'] if p['tipo'] == pack)
+                    data.append([
+                        Paragraph(f"Pack Misto {pack} peças", item_style),
+                        str(qty),
+                        f"€{pack_data['preco']:.2f}".replace('.', ','),
+                        f"€{(qty*pack_data['preco']):.2f}".replace('.', ',')
+                    ])
             
             # Adicionar packs de camisas
             for pack, qty in resultado['detalhes']['packs_camisas'].items():
-                pack_data = next(p for p in CATALOG['packs_camisas'] if p['tipo'] == pack)
-                data.append([
-                    Paragraph(f"Pack Camisas {pack}", item_style),
-                    f"{qty} × €{pack_data['preco']:.2f}".replace('.', ','),
-                    f"€ {qty*pack_data['preco']:.2f}".replace('.', ',')
-                ])
+                if qty > 0:
+                    pack_data = next(p for p in CATALOG['packs_camisas'] if p['tipo'] == pack)
+                    data.append([
+                        Paragraph(f"Pack Camisas {pack}", item_style),
+                        str(qty),
+                        f"€{pack_data['preco']:.2f}".replace('.', ','),
+                        f"€{(qty*pack_data['preco']):.2f}".replace('.', ',')
+                    ])
             
             # Adicionar itens avulsos
             for item, qty in resultado['detalhes']['itens_avulsos'].items():
@@ -174,47 +230,50 @@ def generate_receipt_pdf(resultado):
                     desc = item.replace('_', ' ').title()
                     data.append([
                         Paragraph(desc, item_style),
-                        f"{qty} × €{preco:.2f}".replace('.', ','),
-                        f"€ {qty*preco:.2f}".replace('.', ',')
+                        str(qty),
+                        f"€{preco:.2f}".replace('.', ','),
+                        f"€{(qty*preco):.2f}".replace('.', ',')
                     ])
             
-            # Criar tabela
-            table = Table(data, colWidths=[width*0.45, width*0.25, width*0.2])
-            table.setStyle(TableStyle([
-                ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 12),
-                ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+            # Criar tabela com estilo
+            table = Table(
+                data, 
+                colWidths=[80*mm, 30*mm, 50*mm, 50*mm],
+                repeatRows=1
+            )
+            
+            table_style = TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor(COLORS["table_header"])),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor(COLORS["text_light"])),
+                ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 10),
+                ('ALIGN', (1,0), (-1,0), 'CENTER'),
+                ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('LINEABOVE', (0,0), (-1,0), 1, colors.HexColor('#192844')),
-                ('LINEBELOW', (0,0), (-1,0), 1, colors.HexColor('#192844')),
-                ('LINEABOVE', (0,-1), (-1,-1), 0.5, colors.lightgrey),
-                ('PADDING', (0,0), (-1,-1), 6),
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f0f0f0')),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor('#1a2d44'))
-            ]))
+                ('INNERGRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+                ('BOX', (0,0), (-1,-1), 0.5, colors.lightgrey),
+                ('BACKGROUND', (0,1), (-1,-1), [
+                    colors.HexColor(COLORS["row_even"]), 
+                    colors.HexColor(COLORS["row_odd"])
+                ])
+            ])
+            
+            table.setStyle(table_style)
             
             # Desenhar tabela
-            table.wrapOn(c, width-2*margin, height)
-            table.drawOn(c, margin, height-340)
+            table.wrapOn(c, width_mm*mm - 20*mm, height_mm*mm)
+            table.drawOn(c, 10*mm, y_pos - table._height - 10*mm)
             
-            # Linha divisória final
-            c.setStrokeColor(colors.HexColor('#192844'))
-            c.setLineWidth(2)
-            c.line(margin, height-420, width-margin, height-420)
+            # 9. Seção de total
+            total_y = y_pos - table._height - 30*mm
+            c.setFillColor(colors.HexColor(COLORS["total_bg"]))
+            c.rect(10*mm, total_y, width_mm*mm - 20*mm, 15*mm, fill=1, stroke=0)
             
-            # Total geral
-            total_text = f"€ {resultado['custo_total']:.2f}".replace('.', ',')
-            total_para = Paragraph("<b>TOTAL</b>", total_style)
-            total_para.wrapOn(c, width-2*margin, height)
-            total_para.drawOn(c, margin, height-450)
+            c.setFillColor(colors.white)
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(15*mm, total_y + 5*mm, "TOTAL")
             
-            total_val = Paragraph(f"<b>{total_text}</b>", total_style)
-            total_val.wrapOn(c, width-2*margin, height)
-            total_val.drawOn(c, width-margin-100, height-450)
-            
-            # Telefone
-            phone_para = Paragraph(f"<b>{TELEFONE}</b>", phone_style)
-            phone_para.wrapOn(c, width-2*margin, height)
-            phone_para.drawOn(c, margin, 1*cm)
+            total_text = f"€{resultado['custo_total']:.2f}".replace('.', ',')
+            c.drawRightString(width_mm*mm - 15*mm, total_y + 5*mm, total_text)
             
             c.save()
             return filename
@@ -244,6 +303,9 @@ def optimize():
         # Validação básica
         if not items or not isinstance(items, dict):
             raise ValueError("Formato inválido: esperado objeto com itens")
+            
+        # Capturar nome do cliente se fornecido
+        cliente_nome = data.get('cliente', '').strip()
             
         # Converter valores para inteiros e validar
         clean_items = {}
@@ -280,6 +342,7 @@ def optimize():
         with cache_lock:
             result_cache[receipt_id] = {
                 "result": response,
+                "cliente": cliente_nome,  # Armazenar nome do cliente
                 "timestamp": time.time()
             }
         
@@ -310,9 +373,10 @@ def download_pdf(receipt_id):
                 }), 404
                 
             resultado = result_cache[receipt_id]["result"]
+            cliente_nome = result_cache[receipt_id]["cliente"]
         
-        # Gerar PDF
-        filename = generate_receipt_pdf(resultado)
+        # Gerar PDF com nome do cliente
+        filename = generate_receipt_pdf(resultado, cliente_nome)
         
         return send_file(
             filename,
@@ -329,8 +393,8 @@ def health_check():
     """Endpoint para verificação de saúde da API"""
     return jsonify({
         "status": "online",
-        "versao": "1.4.0",
-        "mensagem": "API com suporte a download de PDF via GET e logo local"
+        "versao": "2.0.0",
+        "mensagem": "API com PDF dinâmico A4 e suporte a cliente"
     })
 
 if __name__ == '__main__':
