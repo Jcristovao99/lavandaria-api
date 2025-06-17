@@ -15,7 +15,6 @@ from flask_cors import CORS
 import threading
 import time
 from pathlib import Path
-import math
 
 app = Flask(__name__)
 CORS(app, origins=["https://chat.openai.com"])
@@ -98,6 +97,15 @@ def calculate_dynamic_height(item_count, has_client):
         BOTTOM_MARGIN
     )
 
+# Função auxiliar para criar cores HexColor corretamente
+def hex_to_color(hex_code):
+    """Converte código hexadecimal para objeto Color do ReportLab"""
+    hex_code = hex_code.lstrip('#')
+    r = int(hex_code[0:2], 16) / 255.0
+    g = int(hex_code[2:4], 16) / 255.0
+    b = int(hex_code[4:6], 16) / 255.0
+    return colors.Color(r, g, b)
+
 # ========================================================================== #
 #  GERADOR DE PDF PROFISSIONAL (ATUALIZADO)
 # ========================================================================== #
@@ -116,15 +124,15 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
             # Criar canvas com tamanho dinâmico
             c = canvas.Canvas(filename, pagesize=(width_mm*mm, height_mm*mm))
             
-            # 3. Configurar paleta de cores
+            # 3. Definir paleta de cores usando a função de conversão
             COLORS = {
-                "background": "#f9f9f7",
-                "text_dark": "#182232",
-                "table_header": "#1a2d44",
-                "row_even": "#ffffff",
-                "row_odd": "#f0f0f0",
-                "total_bg": "#1a2d44",
-                "text_light": "#ffffff"
+                "background": hex_to_color("#f9f9f7"),
+                "text_dark": hex_to_color("#182232"),
+                "table_header": hex_to_color("#1a2d44"),
+                "row_even": hex_to_color("#ffffff"),
+                "row_odd": hex_to_color("#f0f0f0"),
+                "total_bg": hex_to_color("#1a2d44"),
+                "text_light": hex_to_color("#ffffff")
             }
             
             # 4. Estilos personalizados
@@ -135,7 +143,7 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
                 fontName='Helvetica',
                 fontSize=10,
                 leading=12,
-                textColor=colors.HexColor(COLORS["text_dark"])
+                textColor=COLORS["text_dark"]
             )
             
             total_style = ParagraphStyle(
@@ -143,19 +151,11 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
                 parent=styles['BodyText'],
                 fontName='Helvetica-Bold',
                 fontSize=12,
-                textColor=colors.HexColor(COLORS["text_light"])
-            )
-            
-            client_style = ParagraphStyle(
-                'Client',
-                parent=styles['BodyText'],
-                fontName='Helvetica-Bold',
-                fontSize=12,
-                textColor=colors.HexColor(COLORS["text_dark"])
+                textColor=COLORS["text_light"]
             )
             
             # 5. Fundo
-            c.setFillColor(colors.HexColor(COLORS["background"]))
+            c.setFillColor(COLORS["background"])
             c.rect(0, 0, width_mm*mm, height_mm*mm, fill=1, stroke=0)
             
             # 6. Logo no topo (largura total)
@@ -167,21 +167,21 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
                     y=height_mm*mm - logo_height,  # Topo da página
                     width=width_mm*mm,
                     height=logo_height,
-                    preserveAspectRatio=True,
-                    anchor='n'
+                    preserveAspectRatio=False,
+                    mask='auto'
                 )
             else:
                 # Fallback caso o logo não exista
-                c.setFillColor(colors.HexColor(COLORS["table_header"]))
+                c.setFillColor(COLORS["table_header"])
                 c.rect(0, height_mm*mm - logo_height, width_mm*mm, logo_height, fill=1, stroke=0)
-                c.setFillColor(colors.white)
+                c.setFillColor(COLORS["text_light"])
                 c.setFont("Helvetica-Bold", 16)
                 c.drawCentredString(width_mm*mm/2, height_mm*mm - logo_height/2, "ENGOMADORIA TERESA")
             
             # 7. Nome do cliente (se fornecido)
             y_pos = height_mm*mm - logo_height - 10*mm
             if cliente_nome:
-                c.setFillColor(colors.HexColor(COLORS["text_dark"]))
+                c.setFillColor(COLORS["text_dark"])
                 c.setFont("Helvetica-Bold", 12)
                 c.drawString(15*mm, y_pos, f"Cliente: {cliente_nome}")
                 y_pos -= 15*mm  # Espaço adicional após cliente
@@ -235,7 +235,7 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
                         f"€{(qty*preco):.2f}".replace('.', ',')
                     ])
             
-            # Criar tabela com estilo
+            # 9. Criar tabela com estilo
             table = Table(
                 data, 
                 colWidths=[80*mm, 30*mm, 50*mm, 50*mm],
@@ -243,32 +243,29 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
             )
             
             table_style = TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor(COLORS["table_header"])),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor(COLORS["text_light"])),
+                ('BACKGROUND', (0,0), (-1,0), COLORS["table_header"]),
+                ('TEXTCOLOR', (0,0), (-1,0), COLORS["text_light"]),
                 ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 10),
                 ('ALIGN', (1,0), (-1,0), 'CENTER'),
                 ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
                 ('INNERGRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
                 ('BOX', (0,0), (-1,-1), 0.5, colors.lightgrey),
-                ('BACKGROUND', (0,1), (-1,-1), [
-                    colors.HexColor(COLORS["row_even"]), 
-                    colors.HexColor(COLORS["row_odd"])
-                ])
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [COLORS["row_even"], COLORS["row_odd"]])
             ])
             
             table.setStyle(table_style)
             
-            # Desenhar tabela
+            # 10. Desenhar tabela
             table.wrapOn(c, width_mm*mm - 20*mm, height_mm*mm)
             table.drawOn(c, 10*mm, y_pos - table._height - 10*mm)
             
-            # 9. Seção de total
+            # 11. Seção de total
             total_y = y_pos - table._height - 30*mm
-            c.setFillColor(colors.HexColor(COLORS["total_bg"]))
+            c.setFillColor(COLORS["total_bg"])
             c.rect(10*mm, total_y, width_mm*mm - 20*mm, 15*mm, fill=1, stroke=0)
             
-            c.setFillColor(colors.white)
+            c.setFillColor(COLORS["text_light"])
             c.setFont("Helvetica-Bold", 12)
             c.drawString(15*mm, total_y + 5*mm, "TOTAL")
             
@@ -280,6 +277,8 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
             
     except Exception as e:
         app.logger.error(f"Erro ao gerar PDF: {str(e)}")
+        import traceback
+        app.logger.error(traceback.format_exc())
         raise
 
 # ========================================================================== #
@@ -393,7 +392,7 @@ def health_check():
     """Endpoint para verificação de saúde da API"""
     return jsonify({
         "status": "online",
-        "versao": "2.0.0",
+        "versao": "2.0.1",
         "mensagem": "API com PDF dinâmico A4 e suporte a cliente"
     })
 
