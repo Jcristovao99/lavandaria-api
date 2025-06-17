@@ -235,34 +235,35 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
                         f"€{(qty*preco):.2f}".replace('.', ',')
                     ])
             
-            # 9. Criar tabela com estilo
-            table = Table(
-                data, 
-                colWidths=[80*mm, 30*mm, 50*mm, 50*mm],
-                repeatRows=1
-            )
-            
-            table_style = TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), COLORS["table_header"]),
-                ('TEXTCOLOR', (0,0), (-1,0), COLORS["text_light"]),
-                ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 10),
-                ('ALIGN', (1,0), (-1,0), 'CENTER'),
-                ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('INNERGRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
-                ('BOX', (0,0), (-1,-1), 0.5, colors.lightgrey),
-                ('ROWBACKGROUNDS', (0,1), (-1,-1), [COLORS["row_even"], COLORS["row_odd"]])
-            ])
-            
-            table.setStyle(table_style)
-            
-            # 10. Desenhar tabela
-            table.wrapOn(c, width_mm*mm - 20*mm, height_mm*mm)
-            table_width = sum(table._colWidths)  # largura real da tabela
-            page_width = width_mm * mm
-            x_centralizado = (page_width - table_width) / 2
+           # 9. Criar tabela com estilo
+table = Table(
+    data, 
+    colWidths=[85*mm, 20*mm, 40*mm, 45*mm],  # 85+20+40+45 = 190mm
+    repeatRows=1
+)
 
-            table.drawOn(c, x_centralizado, y_pos - table._height - 10*mm)
+table_style = TableStyle([
+    ('BACKGROUND', (0,0), (-1,0), COLORS["table_header"]),
+    ('TEXTCOLOR', (0,0), (-1,0), COLORS["text_light"]),
+    ('FONT', (0,0), (-1,0), 'Helvetica-Bold', 10),
+    ('ALIGN', (1,0), (-1,0), 'CENTER'),
+    ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
+    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ('INNERGRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+    ('BOX', (0,0), (-1,-1), 0.5, colors.lightgrey),
+    ('ROWBACKGROUNDS', (0,1), (-1,-1), [COLORS["row_even"], COLORS["row_odd"]])
+])
+
+table.setStyle(table_style)
+
+# 10. Desenhar tabela
+table_width = sum(table._colWidths)  # 190mm
+page_width = width_mm * mm           # 210mm para A4
+x_centralizado = (page_width - table_width) / 2
+
+table.wrapOn(c, table_width, height_mm*mm)  # <--- CORRIGIDO!
+table.drawOn(c, x_centralizado, y_pos - table._height - 10*mm)
+
 
             
             # 11. Seção de total
