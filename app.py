@@ -284,6 +284,21 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
 # ========================================================================== #
 #  ENDPOINTS DA API
 # ========================================================================== #
+@app.route('/')
+def home():
+    """Endpoint raiz para evitar erros 404"""
+    return jsonify({
+        "status": "online",
+        "servico": "API de Otimização para Engomadoria Teresa",
+        "versao": "2.0.1",
+        "endpoints": {
+            "optimize": "/optimize (POST)",
+            "download_pdf": "/download_pdf/<receipt_id> (GET)",
+            "health": "/health (GET)"
+        },
+        "mensagem": "Envie um POST para /optimize com os itens de lavanderia"
+    })
+
 @app.route('/optimize', methods=['POST'])
 def optimize():
     # 1. Obter e validar dados de entrada
@@ -396,8 +411,42 @@ def health_check():
         "mensagem": "API com PDF dinâmico A4 e suporte a cliente"
     })
 
+# ========================================================================== #
+#  CONFIGURAÇÃO DE PRODUÇÃO
+# ========================================================================== #
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get('PORT', 10000))
-    app.logger.info(f"Iniciando servidor na porta {port}")
-    app.run(host='0.0.0.0', port=port)
+    
+    # Usar servidor de produção se configurado
+    if os.environ.get('PRODUCTION'):
+        try:
+            # Tente usar Gunicorn se disponível
+            from gunicorn.app.base import BaseApplication
+            class FlaskApplication(BaseApplication):
+                def __init__(self, app, options=None):
+                    self.options = options or {}
+                    self.application = app
+                    super().__init__()
+                def load_config(self):
+                    for key, value in self.options.items():
+                        self.cfg.set(key, value)
+                def load(self):
+                    return self.application
+            
+            options = {
+                'bind': f'0.0.0.0:{port}',
+                'workers': 4,
+                'timeout': 120
+            }
+            app.logger.info(f"Iniciando servidor Gunicorn na porta {port}")
+            FlaskApplication(app, options).run()
+            
+        except ImportError:
+            # Fallback para Waitress se Gunicorn não estiver disponível
+            from waitress import serve
+            app.logger.info(f"Iniciando servidor Waitress na porta {port}")
+            serve(app, host='0.0.0.0', port=port)
+    else:
+        # Modo de desenvolvimento
+        app.logger.info(f"Iniciando servidor de desenvolvimento na porta {port}")
+        app.run(host='0.0.0.0', port=port)
