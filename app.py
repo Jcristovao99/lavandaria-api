@@ -258,7 +258,12 @@ def generate_receipt_pdf(resultado, cliente_nome=""):
             
             # 10. Desenhar tabela
             table.wrapOn(c, width_mm*mm - 20*mm, height_mm*mm)
-            table.drawOn(c, 10*mm, y_pos - table._height - 10*mm)
+            table_width = sum(table._colWidths)  # largura real da tabela
+            page_width = width_mm * mm
+            x_centralizado = (page_width - table_width) / 2
+
+            table.drawOn(c, x_centralizado, y_pos - table._height - 10*mm)
+
             
             # 11. Seção de total
             total_y = y_pos - table._height - 30*mm
